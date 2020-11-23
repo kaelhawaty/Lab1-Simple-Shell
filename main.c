@@ -4,6 +4,7 @@
 #define BUFF_SIZE 10
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <sys/types.h>
@@ -12,20 +13,25 @@
 #include <time.h>
 
 FILE *logFile;
-char* getTime(){
+char *getTime()
+{
     time_t t;
     time(&t);
-    char* time = ctime(&t);
+    char *time = ctime(&t);
     int len = strlen(time);
     time[len - 1] = '\0';
     return time;
 }
+
 void interrupt_handler(int sig)
 {
-    if(sig != SIGCHLD){
-        close();
+    // If it is a termination signal, clean up and exit the program.
+    if (sig != SIGCHLD)
+    {
+        fclose(logFile);
         exit(TERMINATE);
     }
+    // Otherwise, it is a signal of a child getting terminated.
     int status;
     int pid;
     while (pid = waitpid(-1, &status, WNOHANG) > 0)
@@ -34,10 +40,12 @@ void interrupt_handler(int sig)
     }
 }
 
+// Reads the current command from standard input with no limit on the size and returns it. 
+// Terminates the program if EOF is encountered or error while reading the line.
 char *read_line()
 {
     char *line = NULL;
-    int buffSize = 0;
+    size_t buffSize = 0;
     // Read current command from stdin.
     if (getline(&line, &buffSize, stdin) == -1)
     {
@@ -54,7 +62,9 @@ char *read_line()
     }
     return line;
 }
-
+// Takes a command as string and splits into strings delimited by whitespaces which are returned as 
+// char** -array of strings- dynamically resized to fit the number of arguments of any command.
+// It additionally takes an integer pointer to return the number of arguments of the current command.
 char **parse_command(char *line, int *arg_length)
 {
     // 2D-array to store the splits of line around white spaces.
@@ -87,15 +97,20 @@ char **parse_command(char *line, int *arg_length)
         }
     }
     *arg_length = it;
+    args[it] = NULL;
     return args;
 }
 
+// Takes an array of strings resulting from parse_command function and the number of arguments. If it is “exit”,
+// it terminates the program otherwise it forks the process and executes the command using execvp and either
+// waits for the process or not depending on whether “&” argument is provided.
 void execute_command(char **command, int arg_length)
 {
     if (strcmp(command[0], "exit") == 0)
     {
         exit(TERMINATE);
     }
+
     bool run_in_background = false;
     if (strcmp(command[arg_length - 1], "&") == 0)
     {
@@ -121,10 +136,7 @@ void execute_command(char **command, int arg_length)
             int status;
             // We use waitpid to wait for a specific process i.e the current one.
             // WUNTRACED: Reports on stopped child processes as well as terminated ones.
-            // TODO: Check given a signal from a background process that it is still waits for the current process.
             waitpid(pid, &status, WUNTRACED);
-            time_t t;
-            time(&t);
             fprintf(logFile, "%s : Process with PID = %d returned with status = %d\n", getTime(), pid, status);
         }
     }
@@ -134,6 +146,7 @@ void execute_command(char **command, int arg_length)
 void init()
 {
     signal(SIGCHLD, interrupt_handler);
+    // Termination signal to properly flush logs before exiting.
     signal(SIGINT, interrupt_handler);
     signal(SIGQUIT, interrupt_handler);
     signal(SIGTERM, interrupt_handler);
@@ -144,9 +157,6 @@ void init()
         perror("init: ");
         exit(FAILED);
     }
-}
-void close(){
-    fclose(logFile);
 }
 int main()
 {
@@ -162,6 +172,5 @@ int main()
         free(line);
         free(command);
     }
-    close();
     return 0;
 }
